@@ -4,33 +4,32 @@ from datetime import datetime, timedelta
 import io
 import os
 
-def fetch_with_handshake():
-    # Chrome-specific headers that NSE expects
+def fetch_nse_data():
+    # Advanced headers to mimic a high-end browser in India
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
-        'Accept-Language': 'en-US,en;q=0.9',
-        'Referer': 'https://www.nseindia.com/'
+        'Accept': 'text/csv,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+        'Accept-Language': 'en-US,en-IN;q=0.9,en;q=0.8',
+        'Referer': 'https://www.nseindia.com/all-reports',
+        'Connection': 'keep-alive'
     }
     
     session = requests.Session()
-    
-    # STEP 1: Visit the main site to "wake up" the session and get cookies
+    # Step 1: Establish a "Session Handshake"
     try:
-        session.get("https://www.nseindia.com", headers=headers, timeout=15)
+        session.get("https://www.nseindia.com", headers=headers, timeout=10)
     except:
         return None
 
-    # STEP 2: Try to find the most recent working day
-    for i in range(1, 6): # Starts from yesterday since today's might not be out yet
+    # Step 2: Search backward to find the most recent successful trading day
+    # (Since it's early Friday, it will likely find Thursday, March 12th)
+    for i in range(1, 6): 
         check_date = datetime.now() - timedelta(days=i)
         date_str = check_date.strftime("%d%m%Y")
         url = f"https://www.nseindia.com/content/nsccl/fao_participant_oi_{date_str}.csv"
         
         try:
-            # We add a small delay so we don't look like a bot
-            response = session.get(url, headers=headers, timeout=15)
-            
+            response = session.get(url, headers=headers, timeout=10)
             if response.status_code == 200 and len(response.text) > 1000:
                 df = pd.read_csv(io.StringIO(response.text), skiprows=1)
                 df = df[df['Client Type'] != 'Total']
@@ -42,22 +41,30 @@ def fetch_with_handshake():
 
 if __name__ == "__main__":
     file_path = 'market_data.csv'
-    data = fetch_with_handshake()
+    new_data = fetch_nse_data()
     
-    if data is not None:
-        # Standardize column names (removes spaces)
-        data.columns = data.columns.str.strip()
+    if new_data is not None:
+        # Standardize columns
+        new_data.columns = new_data.columns.str.strip()
         
-        # Calculate the 'Net' positions for your decoding logic
-        data['Net Index Fut'] = data['Future Index Long'] - data['Future Index Short']
-        data['Net Index Call'] = data['Option Index Call Long'] - data['Option Index Call Short']
-        data['Net Index Put'] = data['Option Index Put Long'] - data['Option Index Put Short']
+        # Core Decoding Logic
+        new_data['Net Index Fut'] = new_data['Future Index Long'] - new_data['Future Index Short']
+        new_data['Net Index Call'] = new_data['Option Index Call Long'] - new_data['Option Index Call Short']
+        new_data['Net Index Put'] = new_data['Option Index Put Long'] - new_data['Option Index Put Short']
         
-        # Keep only the columns your app needs
-        final_df = data[['Date', 'Client Type', 'Net Index Fut', 'Net Index Call', 'Net Index Put']]
+        final_df = new_data[['Date', 'Client Type', 'Net Index Fut', 'Net Index Call', 'Net Index Put']]
         
-        # Overwrite the file with fresh data
-        final_df.to_csv(file_path, index=False)
-        print("✅ Data successfully decoded and saved.")
+        # Re-create file if missing, otherwise append
+        if not os.path.exists(file_path):
+            final_df.to_csv(file_path, index=False)
+            print("✅ File was missing. Created new market_data.csv with data.")
+        else:
+            existing = pd.read_csv(file_path)
+            if final_df['Date'].iloc[0] not in existing['Date'].astype(str).values:
+                final_df.to_csv(file_path, mode='a', index=False, header=False)
+                print(f"✅ Appended new data for {final_df['Date'].iloc[0]}")
     else:
-        print("❌ NSE is still blocking the request or file not found.")
+        # Emergency fallback: ensure file exists so GitHub Action doesn't crash
+        if not os.path.exists(file_path):
+            pd.DataFrame(columns=['Date','Client Type','Net Index Fut','Net Index Call','Net Index Put']).to_csv(file_path, index=False)
+            print("⚠️ Created header-only file because NSE connection failed.")
