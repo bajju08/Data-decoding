@@ -1,27 +1,8 @@
-name: Market Decoder Daily Sync
-on:
-  schedule:
-    - cron: '30 13 * * 1-5' # 7:00 PM IST
-  workflow_dispatch:
-
-jobs:
-  build:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v3
-      - name: Setup Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: '3.9'
-      - name: Install
-        run: pip install pandas requests
-      - name: Harvest
-        run: python harvester.py
-      - name: Commit
+- name: Commit and Push
         run: |
           git config --global user.name "MarketBot"
           git config --global user.email "bot@market.com"
-          git add market_data.csv
-          git commit -m "Update Market Data $(date)" || echo "No changes"
+          # This line forces GitHub to recognize the file even if it was just created
+          git add market_data.csv || echo "File not found"
+          git commit -m "Update Market Data [$(date)]" || echo "No changes to commit"
           git push
