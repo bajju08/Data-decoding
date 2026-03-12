@@ -1,80 +1,83 @@
 import streamlit as st
 import pandas as pd
-import plotly.express as px
 import plotly.graph_objects as go
+import yfinance as yf
 from datetime import datetime
 
-# --- UI Configuration ---
-st.set_page_config(page_title="Smart Money Insights", layout="wide")
-st.title("📊 Smart Money Data Analysis Terminal")
-st.markdown("---")
+st.set_page_config(page_title="Velocity Market Decoder", layout="wide")
 
-# --- Mock Data Loader (Replace with your automated CSV) ---
+# --- Data Loading ---
 @st.cache_data
-def load_data():
-    # In production, this reads 'daily_data.csv' updated by your GitHub Action
-    try:
-        df = pd.read_csv('market_data.csv')
-        return df
-    except:
+def load_all_data():
+    if not pd.io.common.file_exists('market_data.csv'):
         return pd.DataFrame()
+    df = pd.read_csv('market_data.csv')
+    df['Date'] = pd.to_datetime(df['Date'])
+    return df
 
-df = load_data()
+df_raw = load_all_data()
 
-# --- Sidebar Filters ---
-st.sidebar.header("Analysis Filters")
-selected_date = st.sidebar.date_input("Select Date", datetime.now())
+# --- Level Calculation Engine ---
+def get_market_levels():
+    nifty = yf.Ticker("^NSEI")
+    hist = nifty.history(period="2d")
+    current_price = hist['Close'].iloc[-1]
+    prev_close = hist['Close'].iloc[-2]
+    # Simple ATR-based volatility levels for levels
+    range_val = (hist['High'].iloc[-1] - hist['Low'].iloc[-1])
+    return round(current_price), round(prev_close), round(range_val)
 
-# --- Top Row: Key Performance Indicators (KPIs) ---
-col1, col2, col3, col4 = st.columns(4)
+spot, prev_close, mkt_range = get_market_levels()
 
-with col1:
-    st.metric("FII Net Cash", "-1,240 Cr", "-15%", delta_color="inverse")
-with col2:
-    st.metric("Retail Net Calls", "+85,400", "+5%")
-with col3:
-    st.metric("PRO Net Puts", "-42,000", "-12%", delta_color="normal")
-with col4:
-    st.metric("Nifty Spot", "24,261", "+0.45%")
+# --- UI Header ---
+st.title("🏹 Velocity Market Decoder")
+st.subheader(f"Nifty Spot: {spot} | Trend Bias: {'BULLISH' if spot > prev_close else 'BEARISH'}")
 
-# --- Main Dashboard Sections ---
-tab1, tab2, tab3 = st.tabs(["Participant Analysis", "Cash vs F&O Confluence", "Historical Trends"])
-
-with tab1:
-    st.subheader("Participant-Wise Net Open Interest")
+# --- Analysis Logic ---
+if not df_raw.empty:
+    latest_date = df_raw['Date'].max()
+    today_data = df_raw[df_raw['Date'] == latest_date]
     
-    # Logic for Net Position Calculation (The Reverse Engineering Part)
-    # We display a bar chart comparing FII, PRO, and Retail
-    participants = ['Retail', 'FII', 'PRO']
-    net_calls = [150000, -85000, -65000] # Example data
-    net_puts = [-50000, 20000, 30000]
+    fii = today_data[today_data['Client Type'] == 'FII'].iloc[0]
+    pro = today_data[today_data['Client Type'] == 'Pro'].iloc[0]
+    retail = today_data[today_data['Client Type'] == 'Client'].iloc[0]
+
+    col1, col2, col3 = st.columns(3)
     
-    fig = go.Figure(data=[
-        go.Bar(name='Net Calls', x=participants, y=net_calls, marker_color='#2ecc71'),
-        go.Bar(name='Net Puts', x=participants, y=net_puts, marker_color='#e74c3c')
-    ])
-    fig.update_layout(barmode='group', title="Option Sentiment (Writers vs Buyers)")
+    with col1:
+        st.metric("FII Call Positioning", f"{fii['Net Index Call']:,}", delta="Smart Money")
+        st.write("Bias: Strong Sell" if fii['Net Index Call'] < 0 else "Bias: Accumulation")
+
+    with col2:
+        st.metric("Retail Put Exposure", f"{retail['Net Index Put']:,}", delta="Dumb Money", delta_color="inverse")
+        st.write("Trap Alert!" if retail['Net Index Put'] > 50000 else "Neutral")
+
+    # --- Prediction Chart ---
+    st.markdown("### 📈 Tomorrow's Movement Prediction")
+    
+    # Logic: If FII Net Call is -ve and Retail is +ve = SELL ON RISE
+    if fii['Net Index Call'] < 0 and retail['Net Index Call'] > 0:
+        prediction = "Sell on Rise"
+        levels = [spot + (mkt_range*0.5), spot - mkt_range]
+        color = "red"
+    else:
+        prediction = "Buy on Dip"
+        levels = [spot - (mkt_range*0.5), spot + mkt_range]
+        color = "green"
+
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(x=[0, 1, 2, 3], y=[prev_close, levels[0], levels[1], levels[1]-50], 
+                             line=dict(color=color, width=4, dash='dot'), name="Projected Path"))
+    fig.update_layout(title=f"Predicted Movement: {prediction}", xaxis_title="Market Hours", yaxis_title="Nifty Level")
     st.plotly_chart(fig, use_container_width=True)
 
-with tab2:
-    st.subheader("Smart Money Confluence Meter")
-    # This visualizes the "Perfect Level" logic from the videos
-    st.info("The Confluence Meter checks if FII Cash, FII Index Futures, and PRO Option Writing align.")
-    
-    # Indicator Gauge
-    fig_gauge = go.Figure(go.Indicator(
-        mode = "gauge+number",
-        value = 85, # Logic: Calculate a score out of 100 based on data
-        title = {'text': "Market Conviction Score"},
-        gauge = {'axis': {'range': [0, 100]},
-                 'bar': {'color': "darkblue"},
-                 'steps' : [
-                     {'range': [0, 40], 'color': "red"},
-                     {'range': [40, 70], 'color': "yellow"},
-                     {'range': [70, 100], 'color': "green"}]}))
-    st.plotly_chart(fig_gauge)
+    # --- Support & Resistance Levels ---
+    st.markdown("### 🛡️ Critical Decision Levels")
+    c1, c2, c3, c4 = st.columns(4)
+    c1.error(f"Resistance 2: {spot + mkt_range}")
+    c2.warning(f"Resistance 1: {spot + (mkt_range*0.5)}")
+    c3.success(f"Support 1: {spot - (mkt_range*0.5)}")
+    c4.info(f"Support 2: {spot - mkt_range}")
 
-with tab3:
-    st.subheader("Historical Momentum Tracking")
-    # Use your Velocity Compounding Model logic here
-    st.line_chart(df[['date', 'fii_net_oi']])
+else:
+    st.error("Please run the GitHub Harvester to populate data.")
